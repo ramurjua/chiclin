@@ -1,0 +1,43 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- PyInstaller / Nuitka build output ---
+chiclin.build/
+chiclin.dist/
+chiclin.onefile-build/
+chiclin.exe
+*.spec.bak
+
+# --- App runtime data (user-generated CSV records) ---
+chiclin/*.csv
+
+# --- Backups / snapshots ---
+prev/
+
+# --- Android / Gradle ---
+Android-app/.gradle/
+Android-app/.kotlin/
+Android-app/local.properties
+Android-app/app/build/
+Android-app/build/
+Android-app/*/build/
+Android-app/.idea/
+Android-app/captures/
+Android-app/*.iml
+Android-app/*/*.iml
+Android-app/.cxx/
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
