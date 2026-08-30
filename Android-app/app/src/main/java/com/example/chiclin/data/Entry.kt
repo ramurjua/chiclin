@@ -14,6 +14,9 @@ data class Entry(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val tipo: String,
     val nombre: String,
+    /** Grouping used for all analysis (summaries, charts, comparisons). Defaults to [nombre] so
+     *  a new entry starts out as its own category until the user merges it into another one. */
+    val categoria: String = nombre,
     val valor: Double,
     val mes: Int,
     val anio: Int

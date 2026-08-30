@@ -13,15 +13,25 @@ val MONTHS_ES = mapOf(
 
 fun monthLabel(mes: Int, anio: Int): String = "${MONTHS_ES[mes]} $anio"
 
-/** Sums [entries] of the given [tipo], grouped by nombre (category). */
-fun aggregate(entries: List<Entry>, tipo: String): Map<String, Double> {
+private fun aggregateBy(entries: List<Entry>, tipo: String, key: (Entry) -> String): Map<String, Double> {
     val result = LinkedHashMap<String, Double>()
     for (e in entries) {
         if (e.tipo != tipo) continue
-        result[e.nombre] = (result[e.nombre] ?: 0.0) + e.valor
+        val k = key(e)
+        result[k] = (result[k] ?: 0.0) + e.valor
     }
     return result
 }
+
+/** Sums [entries] of the given [tipo], grouped by categoria. Used by every cross-month analysis
+ *  (Comparación, Histórico) so that categorized entries (e.g. "Japón Vuelos" + "Japón Compras"
+ *  under "Viajes") get combined. */
+fun aggregate(entries: List<Entry>, tipo: String): Map<String, Double> = aggregateBy(entries, tipo) { it.categoria }
+
+/** Sums [entries] of the given [tipo], grouped by nombre (the literal entry name). Used by the
+ *  Mes actual tab, where the user is looking at what they entered this month, not the category
+ *  it's been folded into for longer-term analysis. */
+fun aggregateByNombre(entries: List<Entry>, tipo: String): Map<String, Double> = aggregateBy(entries, tipo) { it.nombre }
 
 data class Summary(
     val totalIngresos: Double,
@@ -33,10 +43,14 @@ data class Summary(
     val ahorrosAgg: Map<String, Double>
 )
 
-fun summaryFor(entries: List<Entry>): Summary {
-    val gastosAgg = aggregate(entries, Tipo.GASTOS)
-    val ingresosAgg = aggregate(entries, Tipo.INGRESOS)
-    val ahorrosAgg = aggregate(entries, Tipo.AHORROS)
+/** [porCategoria] selects the grouping key for [Summary.gastosAgg]/[ingresosAgg]/[ahorrosAgg] —
+ *  categoria (default, for cross-month analysis) or nombre (Mes actual). Totals/balance are the
+ *  same either way. */
+fun summaryFor(entries: List<Entry>, porCategoria: Boolean = true): Summary {
+    val aggFn = if (porCategoria) ::aggregate else ::aggregateByNombre
+    val gastosAgg = aggFn(entries, Tipo.GASTOS)
+    val ingresosAgg = aggFn(entries, Tipo.INGRESOS)
+    val ahorrosAgg = aggFn(entries, Tipo.AHORROS)
 
     val totalIngresos = ingresosAgg.values.sum()
     val totalGastos = gastosAgg.values.sum()
@@ -174,12 +188,14 @@ data class SerieCategoria(val categoria: String, val valores: List<Double>)
  * Per-category gasto evolution within a single year (caller is expected to have already
  * filtered [entriesPorMes] to one año — labels are month names only, no year). Returns the
  * chronological month labels alongside one [SerieCategoria] per category that appeared in at
- * least one month, values aligned index-for-index with the returned labels.
+ * least two distinct months (a single occurrence isn't a trend worth plotting), values aligned
+ * index-for-index with the returned labels.
  */
 fun evolucionPorCategoria(entriesPorMes: List<Pair<MonthYear, List<Entry>>>): Pair<List<String>, List<SerieCategoria>> {
     val labels = entriesPorMes.map { MONTHS_ES[it.first.mes] ?: "" }
     val aggPerMonth = entriesPorMes.map { aggregate(it.second, Tipo.GASTOS) }
-    val allCats = aggPerMonth.flatMap { it.keys }.toSortedSet().toList()
+    val apariciones = aggPerMonth.flatMap { it.keys }.groupingBy { it }.eachCount()
+    val allCats = apariciones.filterValues { it >= 2 }.keys.sorted()
     val series = allCats.map { cat -> SerieCategoria(cat, aggPerMonth.map { it[cat] ?: 0.0 }) }
     return labels to series
 }

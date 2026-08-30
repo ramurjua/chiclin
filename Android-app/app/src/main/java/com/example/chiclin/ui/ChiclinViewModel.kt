@@ -33,6 +33,10 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
 
     private val now = Calendar.getInstance()
     private val currentCalendarMonth = MonthYear(now.get(Calendar.MONTH) + 1, now.get(Calendar.YEAR))
+    private val previousCalendarMonth = MonthYear(
+        if (currentCalendarMonth.mes == 1) 12 else currentCalendarMonth.mes - 1,
+        if (currentCalendarMonth.mes == 1) currentCalendarMonth.anio - 1 else currentCalendarMonth.anio
+    )
 
     private val _selectedMonth = MutableStateFlow(currentCalendarMonth)
     val selectedMonth: StateFlow<MonthYear> = _selectedMonth
@@ -50,11 +54,18 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
         .flatMapLatest { my -> repository.getEntriesForMonthStream(my.mes, my.anio) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Mes actual groups by nombre (the literal entry name), not categoria: the user is looking
+    // at what they entered this month, not the longer-term category it's been folded into.
     val summary: StateFlow<Summary> = currentEntries
-        .map { summaryFor(it) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), summaryFor(emptyList()))
+        .map { summaryFor(it, porCategoria = false) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), summaryFor(emptyList(), porCategoria = false))
 
     private val allEntries: StateFlow<List<Entry>> = repository.getAllEntriesStream()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Every categoria in use, for the edit dialog's autocomplete. */
+    val availableCategorias: StateFlow<List<String>> = allEntries
+        .map { entries -> entries.map { it.categoria }.filter { it.isNotBlank() }.distinct().sorted() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val entriesByMonth: StateFlow<List<Pair<MonthYear, List<Entry>>>> = allEntries
@@ -81,7 +92,18 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
             if (year == null) emptyList() else byMonth.filter { it.first.anio == year }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val recurrentes: StateFlow<Recurrentes> = entriesByMonthForYear
+    /**
+     * The current calendar month is still in progress — a fixed cost that always lands later
+     * in the month (e.g. rent paid on the 28th) may simply not have happened yet, which would
+     * otherwise make it look "ocasional" instead of "fijo". Recurring-expense analysis excludes
+     * it entirely rather than let a partial month skew the classification.
+     */
+    private val entriesByMonthForRecurrentes: StateFlow<List<Pair<MonthYear, List<Entry>>>> =
+        entriesByMonthForYear
+            .map { byMonth -> byMonth.filter { it.first != currentCalendarMonth } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val recurrentes: StateFlow<Recurrentes> = entriesByMonthForRecurrentes
         .map { analizarGastosRecurrentes(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), analizarGastosRecurrentes(emptyList()))
 
@@ -99,6 +121,12 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
     private val _compMesB = MutableStateFlow<MonthYear?>(null)
     val compMesB: StateFlow<MonthYear?> = _compMesB
 
+    // availableMonths is seeded with just [currentCalendarMonth] before the real DB query
+    // resolves, so the first collected value below is always that premature single-item list —
+    // tracking "has the user picked" explicitly (rather than "are the values still null") lets
+    // later, complete emissions keep correcting the default instead of getting locked out by it.
+    private var compMesUserSet = false
+
     val comparacion: StateFlow<Comparacion?> = combine(_compMesA, _compMesB, entriesByMonth) { a, b, byMonth ->
         if (a == null || b == null || a == b) return@combine null
         val entriesA = byMonth.firstOrNull { it.first == a }?.second ?: emptyList()
@@ -110,15 +138,27 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
     val importMessage: StateFlow<String?> = _importMessage
 
     init {
-        // Default the comparison pickers to the two most recent months once we know them.
+        // Default the comparison pickers to previous month vs. current month when both have
+        // data; otherwise fall back to the two most recent months available.
         viewModelScope.launch {
             availableMonths.collect { months ->
-                if (months.size >= 2) {
-                    if (_compMesA.value == null) _compMesA.value = months[months.size - 2]
-                    if (_compMesB.value == null) _compMesB.value = months.last()
-                } else if (months.size == 1 && _compMesA.value == null) {
-                    _compMesA.value = months.first()
-                    _compMesB.value = months.first()
+                if (compMesUserSet) return@collect
+                val hasPrevious = months.any { it == previousCalendarMonth }
+                val hasCurrent = months.any { it == currentCalendarMonth }
+
+                when {
+                    hasPrevious && hasCurrent -> {
+                        _compMesA.value = previousCalendarMonth
+                        _compMesB.value = currentCalendarMonth
+                    }
+                    months.size >= 2 -> {
+                        _compMesA.value = months[months.size - 2]
+                        _compMesB.value = months.last()
+                    }
+                    months.size == 1 -> {
+                        _compMesA.value = months.first()
+                        _compMesB.value = months.first()
+                    }
                 }
             }
         }
@@ -137,8 +177,8 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
         _selectedMonth.value = monthYear
     }
 
-    fun selectCompMesA(monthYear: MonthYear) { _compMesA.value = monthYear }
-    fun selectCompMesB(monthYear: MonthYear) { _compMesB.value = monthYear }
+    fun selectCompMesA(monthYear: MonthYear) { compMesUserSet = true; _compMesA.value = monthYear }
+    fun selectCompMesB(monthYear: MonthYear) { compMesUserSet = true; _compMesB.value = monthYear }
 
     /** Returns an error message to show the user, or null on success. */
     fun addEntry(nombre: String, valorText: String, tipo: String): String? {
@@ -157,16 +197,20 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
         return null
     }
 
-    /** Returns an error message to show the user, or null on success. */
-    fun updateEntry(entry: Entry, nombre: String, valorText: String, tipo: String): String? {
+    /**
+     * Returns an error message to show the user, or null on success. An empty [categoria]
+     * resets the entry to its own category (categoria = nombre).
+     */
+    fun updateEntry(entry: Entry, nombre: String, valorText: String, tipo: String, categoria: String): String? {
         val nombreTrim = nombre.trim()
         if (nombreTrim.isEmpty()) return "Introduce un nombre."
         val valor = valorText.trim().replace(",", ".").toDoubleOrNull()
             ?: return "\"$valorText\" no es un número válido."
         if (valor <= 0) return "El valor debe ser mayor que 0."
+        val categoriaTrim = categoria.trim().ifEmpty { nombreTrim }
 
         viewModelScope.launch {
-            repository.updateEntry(entry.copy(nombre = nombreTrim, valor = valor, tipo = tipo))
+            repository.updateEntry(entry.copy(nombre = nombreTrim, valor = valor, tipo = tipo, categoria = categoriaTrim))
         }
         return null
     }

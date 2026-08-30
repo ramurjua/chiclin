@@ -17,6 +17,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
@@ -76,6 +77,7 @@ fun MesActualScreen(viewModel: ChiclinViewModel, modifier: Modifier = Modifier) 
     val summary by viewModel.summary.collectAsState()
     val importMessage by viewModel.importMessage.collectAsState()
     val currentEntries by viewModel.currentEntries.collectAsState()
+    val availableCategorias by viewModel.availableCategorias.collectAsState()
 
     var nombre by remember { mutableStateOf("") }
     var valorText by remember { mutableStateOf("") }
@@ -270,9 +272,10 @@ fun MesActualScreen(viewModel: ChiclinViewModel, modifier: Modifier = Modifier) 
     editingEntry?.let { entry ->
         EditEntryDialog(
             entry = entry,
+            categoriaSuggestions = availableCategorias,
             onDismiss = { editingEntry = null },
-            onSave = { nuevoNombre, nuevoValorText, nuevoTipo ->
-                val err = viewModel.updateEntry(entry, nuevoNombre, nuevoValorText, nuevoTipo)
+            onSave = { nuevoNombre, nuevoValorText, nuevoTipo, nuevaCategoria ->
+                val err = viewModel.updateEntry(entry, nuevoNombre, nuevoValorText, nuevoTipo, nuevaCategoria)
                 if (err == null) editingEntry = null
                 err
             },
@@ -316,8 +319,9 @@ private fun EntriesListDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(entry.nombre, style = MaterialTheme.typography.bodyMedium)
+                                val categoriaSuffix = if (entry.categoria != entry.nombre) " · ${entry.categoria}" else ""
                                 Text(
-                                    "${tipoLabel(entry.tipo)} · ${"%.2f".format(entry.valor)} €",
+                                    "${tipoLabel(entry.tipo)}$categoriaSuffix · ${"%.2f".format(entry.valor)} €",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -343,13 +347,15 @@ private fun EntriesListDialog(
 @Composable
 private fun EditEntryDialog(
     entry: Entry,
+    categoriaSuggestions: List<String>,
     onDismiss: () -> Unit,
-    onSave: (nombre: String, valorText: String, tipo: String) -> String?,
+    onSave: (nombre: String, valorText: String, tipo: String, categoria: String) -> String?,
     onDelete: () -> Unit
 ) {
     var nombre by remember(entry.id) { mutableStateOf(entry.nombre) }
     var valorText by remember(entry.id) { mutableStateOf("%.2f".format(entry.valor)) }
     var tipo by remember(entry.id) { mutableStateOf(entry.tipo) }
+    var categoria by remember(entry.id) { mutableStateOf(entry.categoria) }
     var errorMessage by remember(entry.id) { mutableStateOf<String?>(null) }
 
     AlertDialog(
@@ -393,6 +399,18 @@ private fun EditEntryDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.fillMaxWidth()
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                CategoriaField(
+                    value = categoria,
+                    onValueChange = { categoria = it },
+                    suggestions = categoriaSuggestions,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "Agrupa esta entrada con otras de la misma categoría (p. ej. \"Viajes\"). Déjalo vacío para que sea su propia categoría.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 errorMessage?.let {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -405,7 +423,7 @@ private fun EditEntryDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                val err = onSave(nombre, valorText, tipo)
+                val err = onSave(nombre, valorText, tipo, categoria)
                 if (err != null) errorMessage = err
             }) { Text("Guardar") }
         },
@@ -413,6 +431,54 @@ private fun EditEntryDialog(
             TextButton(onClick = onDismiss) { Text("Cancelar") }
         }
     )
+}
+
+/** Editable text field with a dropdown of existing categorías matching what's typed so far. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CategoriaField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    suggestions: List<String>,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val filtered = remember(value, suggestions) {
+        if (value.isBlank()) suggestions
+        else suggestions.filter { it.contains(value, ignoreCase = true) && !it.equals(value, ignoreCase = true) }
+    }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded && filtered.isNotEmpty(),
+        onExpandedChange = { expanded = it },
+        modifier = modifier
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = { onValueChange(it); expanded = true },
+            label = { Text("Categoría") },
+            singleLine = true,
+            trailingIcon = {
+                if (value.isNotEmpty()) {
+                    IconButton(onClick = { onValueChange(""); expanded = false }) {
+                        Icon(Icons.Filled.Close, contentDescription = "Borrar categoría")
+                    }
+                }
+            },
+            modifier = Modifier.menuAnchor().fillMaxWidth()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded && filtered.isNotEmpty(),
+            onDismissRequest = { expanded = false }
+        ) {
+            filtered.forEach { suggestion ->
+                DropdownMenuItem(
+                    text = { Text(suggestion) },
+                    onClick = { onValueChange(suggestion); expanded = false }
+                )
+            }
+        }
+    }
 }
 
 @Composable
