@@ -15,5 +15,6 @@ interface EntriesRepository {
     suspend fun getEntriesForMonthOnce(mes: Int, anio: Int): List<Entry>
     suspend fun insertEntry(entry: Entry)
     suspend fun insertEntries(entries: List<Entry>)
+    suspend fun updateEntry(entry: Entry)
     suspend fun deleteEntry(entry: Entry)
 }

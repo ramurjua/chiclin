@@ -8,11 +8,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -21,6 +27,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,11 +46,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.chiclin.data.Entry
 import com.example.chiclin.data.MONTHS_ES
 import com.example.chiclin.data.Summary
 import com.example.chiclin.data.Tipo
@@ -64,12 +75,15 @@ fun MesActualScreen(viewModel: ChiclinViewModel, modifier: Modifier = Modifier) 
     val selectedMonth by viewModel.selectedMonth.collectAsState()
     val summary by viewModel.summary.collectAsState()
     val importMessage by viewModel.importMessage.collectAsState()
+    val currentEntries by viewModel.currentEntries.collectAsState()
 
     var nombre by remember { mutableStateOf("") }
     var valorText by remember { mutableStateOf("") }
     var tipoSeleccionado by remember { mutableStateOf(Tipo.GASTOS) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var pendingCsv by remember { mutableStateOf<PendingCsvImport?>(null) }
+    var showEntriesList by remember { mutableStateOf(false) }
+    var editingEntry by remember { mutableStateOf<Entry?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val csvPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -134,13 +148,18 @@ fun MesActualScreen(viewModel: ChiclinViewModel, modifier: Modifier = Modifier) 
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            MonthDropdown(
-                label = "Mes",
-                months = availableMonths,
-                selected = selectedMonth,
-                onSelect = viewModel::selectMonth,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                MonthDropdown(
+                    label = "Mes",
+                    months = availableMonths,
+                    selected = selectedMonth,
+                    onSelect = viewModel::selectMonth,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { showEntriesList = true }) {
+                    Icon(Icons.Filled.Edit, contentDescription = "Editar entradas del mes")
+                }
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -237,6 +256,163 @@ fun MesActualScreen(viewModel: ChiclinViewModel, modifier: Modifier = Modifier) 
             }
         )
     }
+
+    if (showEntriesList) {
+        EntriesListDialog(
+            entries = currentEntries,
+            monthLabelText = monthLabel(selectedMonth.mes, selectedMonth.anio),
+            onEditEntry = { editingEntry = it },
+            onDeleteEntry = { viewModel.deleteEntry(it) },
+            onDismiss = { showEntriesList = false }
+        )
+    }
+
+    editingEntry?.let { entry ->
+        EditEntryDialog(
+            entry = entry,
+            onDismiss = { editingEntry = null },
+            onSave = { nuevoNombre, nuevoValorText, nuevoTipo ->
+                val err = viewModel.updateEntry(entry, nuevoNombre, nuevoValorText, nuevoTipo)
+                if (err == null) editingEntry = null
+                err
+            },
+            onDelete = {
+                viewModel.deleteEntry(entry)
+                editingEntry = null
+            }
+        )
+    }
+}
+
+private fun tipoLabel(tipo: String): String = when (tipo) {
+    Tipo.GASTOS -> "Gasto"
+    Tipo.INGRESOS -> "Ingreso"
+    Tipo.AHORROS -> "Ahorro"
+    else -> tipo
+}
+
+@Composable
+private fun EntriesListDialog(
+    entries: List<Entry>,
+    monthLabelText: String,
+    onEditEntry: (Entry) -> Unit,
+    onDeleteEntry: (Entry) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Entradas de $monthLabelText") },
+        text = {
+            if (entries.isEmpty()) {
+                Text("Sin entradas este mes.", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
+                    items(entries, key = { it.id }) { entry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(entry.nombre, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "${tipoLabel(entry.tipo)} · ${"%.2f".format(entry.valor)} €",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { onEditEntry(entry) }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Editar \"${entry.nombre}\"")
+                            }
+                            IconButton(onClick = { onDeleteEntry(entry) }) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Eliminar \"${entry.nombre}\"")
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Cerrar") }
+        }
+    )
+}
+
+@Composable
+private fun EditEntryDialog(
+    entry: Entry,
+    onDismiss: () -> Unit,
+    onSave: (nombre: String, valorText: String, tipo: String) -> String?,
+    onDelete: () -> Unit
+) {
+    var nombre by remember(entry.id) { mutableStateOf(entry.nombre) }
+    var valorText by remember(entry.id) { mutableStateOf("%.2f".format(entry.valor)) }
+    var tipo by remember(entry.id) { mutableStateOf(entry.tipo) }
+    var errorMessage by remember(entry.id) { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Editar entrada") },
+        text = {
+            Column {
+                Row {
+                    FilterChip(
+                        selected = tipo == Tipo.GASTOS,
+                        onClick = { tipo = Tipo.GASTOS },
+                        label = { Text("Gasto") }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = tipo == Tipo.INGRESOS,
+                        onClick = { tipo = Tipo.INGRESOS },
+                        label = { Text("Ingreso") }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    FilterChip(
+                        selected = tipo == Tipo.AHORROS,
+                        onClick = { tipo = Tipo.AHORROS },
+                        label = { Text("Ahorro") }
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = nombre,
+                    onValueChange = { nombre = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = valorText,
+                    onValueChange = { valorText = it },
+                    label = { Text("Valor") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                errorMessage?.let {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(onClick = onDelete) {
+                    Text("Eliminar entrada", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                val err = onSave(nombre, valorText, tipo)
+                if (err != null) errorMessage = err
+            }) { Text("Guardar") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable

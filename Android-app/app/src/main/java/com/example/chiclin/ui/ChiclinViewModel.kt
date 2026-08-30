@@ -157,6 +157,20 @@ class ChiclinViewModel(private val repository: EntriesRepository) : ViewModel() 
         return null
     }
 
+    /** Returns an error message to show the user, or null on success. */
+    fun updateEntry(entry: Entry, nombre: String, valorText: String, tipo: String): String? {
+        val nombreTrim = nombre.trim()
+        if (nombreTrim.isEmpty()) return "Introduce un nombre."
+        val valor = valorText.trim().replace(",", ".").toDoubleOrNull()
+            ?: return "\"$valorText\" no es un número válido."
+        if (valor <= 0) return "El valor debe ser mayor que 0."
+
+        viewModelScope.launch {
+            repository.updateEntry(entry.copy(nombre = nombreTrim, valor = valor, tipo = tipo))
+        }
+        return null
+    }
+
     fun deleteEntry(entry: Entry) {
         viewModelScope.launch { repository.deleteEntry(entry) }
     }

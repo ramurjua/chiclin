@@ -19,5 +19,7 @@ class OfflineEntriesRepository(private val entryDao: EntryDao) : EntriesReposito
 
     override suspend fun insertEntries(entries: List<Entry>) = entryDao.insertAll(entries)
 
+    override suspend fun updateEntry(entry: Entry) = entryDao.update(entry)
+
     override suspend fun deleteEntry(entry: Entry) = entryDao.delete(entry)
 }
